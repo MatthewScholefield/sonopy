@@ -11,10 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from typing import Callable
 import numpy as np
 from functools import lru_cache
 from scipy.fftpack import dct
 
+
+WindowFunction = Callable[[np.ndarray], np.ndarray]
 
 def safe_log(x):
     """Prevents error on log(0) or log(-1)"""
@@ -53,26 +56,32 @@ def filterbanks(sample_rate, num_filt, fft_len):
     return banks
 
 
+def hanning_window(frames):
+    """Receives audio frames (chunks x samples)"""
+    return frames * _cached_hanning(frames.shape[1])
+
+
 def chop_array(arr, window_size, hop_size):
     """chop_array([1,2,3], 2, 1) -> [[1,2], [2,3]]"""
     return [arr[i - window_size:i] for i in range(window_size, len(arr) + 1, hop_size)]
 
 
-def power_spec(audio: np.ndarray, window_stride=(160, 80), fft_size=512):
+def power_spec(audio: np.ndarray, window_stride=(160, 80), fft_size=512, window=lambda x: x):
     """Calculates power spectrogram"""
     frames = chop_array(audio, *window_stride) or np.empty((0, window_stride[0]))
-    fft = np.fft.rfft(frames, n=fft_size)
+    windowed_frames = window(np.array(frames))
+    fft = np.fft.rfft(windowed_frames, n=fft_size)
     return (fft.real ** 2 + fft.imag ** 2) / fft_size
 
 
-def mel_spec(audio, sample_rate, window_stride=(160, 80), fft_size=512, num_filt=20):
+def mel_spec(audio, sample_rate, window_stride=(160, 80), fft_size=512, num_filt=20, window: WindowFunction = lambda x: x):
     """Calculates mel spectrogram (condensed spectrogram)"""
-    spec = power_spec(audio, window_stride, fft_size)
+    spec = power_spec(audio, window_stride, fft_size, window)
     return safe_log(np.dot(spec, filterbanks(sample_rate, num_filt, spec.shape[1]).T))
 
 
 def mfcc_spec(audio, sample_rate, window_stride=(160, 80),
-              fft_size=512, num_filt=20, num_coeffs=13, return_parts=False):
+              fft_size=512, num_filt=20, window=lambda x: x, num_coeffs=13, return_parts=False):
     """Calculates mel frequency cepstrum coefficient spectrogram"""
     powers = power_spec(audio, window_stride, fft_size)
     if powers.size == 0:
@@ -86,3 +95,8 @@ def mfcc_spec(audio, sample_rate, window_stride=(160, 80),
         return powers, filters, mels, mfccs
     else:
         return mfccs
+
+
+@lru_cache()
+def _cached_hanning(n):
+    return np.hanning(n)
